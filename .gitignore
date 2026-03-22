@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*$py.class
+Codebase/checkpoints/
+.DS_Store
+~$*
+.idea/
+.vscode/
