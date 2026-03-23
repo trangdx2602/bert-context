@@ -1,8 +1,43 @@
-# Context-aware BERT – ERC Nhóm 9
+# Context-aware BERT – Nhận diện cảm xúc trong hội thoại
 
-Bài toán: **Emotion Recognition in Conversation (ERC)** trên dataset **MELD**  
-Model: **Context-aware BERT** – ghép k câu trước vào input để học ngữ cảnh hội thoại  
-Người thực hiện: **Tráng**
+**Bài toán:** Emotion Recognition in Conversation (ERC) trên dataset MELD
+**Mô hình:** Context-aware BERT – ghép k câu trước vào input để học ngữ cảnh hội thoại
+**Người thực hiện:** Tráng – Nhóm 9
+
+---
+
+## Ý tưởng
+
+Thay vì phân loại từng câu đơn lẻ như BERT Baseline, mô hình nhận input là chuỗi k câu trước ghép với câu hiện tại:
+
+```
+u_{t-k} [SEP] u_{t-k+1} [SEP] ... [SEP] u_t
+```
+
+BERT mã hóa toàn bộ chuỗi, lấy embedding `[CLS]` làm đại diện, rồi phân loại cảm xúc của `u_t`.
+
+| Mô hình | Input |
+|---------|-------|
+| BERT Baseline | `u_t` |
+| **Context-aware BERT** | `u_{t-k} [SEP] ... [SEP] u_t` |
+
+---
+
+## Cấu trúc thư mục
+
+```
+Codebase/
+├── config.py           # Cấu hình chung (paths, hyperparameters)
+├── utils.py            # EarlyStopping, class weights, checkpoint
+├── train.py            # Training loop
+├── evaluate.py         # Đánh giá trên test set
+├── requirements.txt
+├── data/
+│   └── dataset.py      # MELDDataset – build context window, tokenize
+├── models/
+│   └── bert_context.py # ContextAwareBERT
+└── checkpoints/        # Tự động tạo khi train
+```
 
 ---
 
@@ -12,101 +47,62 @@ Người thực hiện: **Tráng**
 pip install -r requirements.txt
 ```
 
----
-
-## Cấu trúc thư mục
-
-```
-Codebase/
-├── config.py              # Cấu hình chung (paths, hyperparameters)
-├── utils.py               # Tiện ích: EarlyStopping, class weights, checkpoint
-├── requirements.txt
-│
-├── data/
-│   └── dataset.py         # MELDDataset – load CSV, build context window, tokenize
-│
-├── models/
-│   └── bert_context.py    # ContextAwareBERT model
-│
-├── train.py               # Training loop
-├── evaluate.py            # Đánh giá trên test set
-└── checkpoints/           # Checkpoint được tạo tự động khi train
-```
+Đặt 3 file CSV của MELD vào thư mục `Documents/` (cùng cấp với `Codebase/`):
+- `train_sent_emo.csv`
+- `val_sent_emo.csv`
+- `test_sent_emo.csv`
 
 ---
 
-## Cách chạy
+## Chạy thực nghiệm
 
-### 1. Huấn luyện
+### Huấn luyện
 
 ```bash
-# Mặc định (context k=3)
+# k=3 (mặc định)
 python train.py --model bert_context --context_k 3
 
-# Tối ưu: Mixed Precision GPU + Gradient Accumulation (effective batch=32)
+# Dùng gradient accumulation (effective batch = 32)
 python train.py --model bert_context --context_k 3 --batch_size 8 --accum_steps 4
 
-# Thử nghiệm k=1,3,5
+# Thử nghiệm k=1, k=5
 python train.py --model bert_context --context_k 1
 python train.py --model bert_context --context_k 5
 
-# Chạy trên CPU (tắt AMP)
+# Chạy trên CPU
 python train.py --model bert_context --context_k 3 --no_amp
 ```
 
-### 2. Đánh giá
+### Đánh giá
 
 ```bash
-# Tự động tìm checkpoint theo model+k
 python evaluate.py --model bert_context --context_k 3
 
 # Chỉ định checkpoint cụ thể
 python evaluate.py --model bert_context --context_k 3 --checkpoint checkpoints/bert_context_k3_best.pt
 ```
 
----
+### Chạy trên Google Colab
 
-## Ý tưởng Context-aware BERT
-
-| Model | Input | Mục tiêu |
-|---|---|---|
-| BERT Baseline | `u_t` (câu đơn) | Làm mốc so sánh |
-| **Context-aware BERT** | `u_{t-k} [SEP] ... [SEP] u_t` | Học ngữ cảnh hội thoại cục bộ |
-
-BERT nhận toàn bộ chuỗi context và dùng embedding `[CLS]` để phân loại cảm xúc của câu cuối `u_t`.
+Mở file `ERC_ContextBERT_Experiments.ipynb` ở thư mục gốc, bật GPU T4 và chạy tuần tự từng cell.
 
 ---
 
-## Thí nghiệm gợi ý
+## Kết quả thực nghiệm
 
-| context_k | Ý nghĩa |
-|---|---|
-| `k=1` | Chỉ câu ngay trước |
-| `k=3` | 3 câu trước (mặc định) |
-| `k=5` | 5 câu trước |
+*(Điền sau khi chạy xong)*
 
-Kết quả được đánh giá bằng **Weighted F1-score** trên tập test MELD.
+| Mô hình | Context k | Accuracy | Weighted F1 |
+|---------|-----------|----------|-------------|
+| BERT Baseline | – | | |
+| Context-aware BERT | k=1 | | |
+| Context-aware BERT | k=3 | | |
+| Context-aware BERT | k=5 | | |
 
 ---
 
 ## Dataset MELD
 
-- **13,000+** utterances, **7 nhãn**: neutral, surprise, fear, sadness, joy, disgust, anger
-- Trích từ series *Friends*
-- File: `Documents/train_sent_emo.csv`, `val_sent_emo.csv`, `test_sent_emo.csv`
-- Cột quan trọng: `Utterance`, `Speaker`, `Emotion`, `Dialogue_ID`, `Utterance_ID`
-
----
-
-## Tối ưu tốc độ
-
-| Kỹ thuật | Mô tả | Hiệu quả |
-|---|---|---|
-| **Pre-tokenize** | Tokenize toàn bộ data 1 lần khi khởi tạo | Giảm tải CPU mỗi epoch |
-| **Mixed Precision (AMP)** | float16 thay float32 trên GPU | Tăng tốc 2–3x, giảm VRAM |
-| **Gradient Accumulation** | `--accum_steps 4` → effective batch ×4 | Batch lớn mà không tốn VRAM |
-| **pin_memory** | DataLoader dùng pinned memory | Transfer CPU→GPU nhanh hơn |
-| **fused AdamW** | Fused CUDA kernel cho optimizer | Nhanh hơn ~10% trên GPU |
-| **non_blocking transfer** | `.to(device, non_blocking=True)` | Overlap data transfer + compute |
-
-> Trên CPU (không có GPU): AMP tự động tắt. Thêm `--no_amp` nếu cần debug.
+- ~13,000 utterances, 7 nhãn cảm xúc: `neutral, surprise, fear, sadness, joy, disgust, anger`
+- Trích từ series *Friends*, có sẵn tập train / val / test
+- Cột dùng: `Utterance`, `Speaker`, `Emotion`, `Dialogue_ID`, `Utterance_ID`
