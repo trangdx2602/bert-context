@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 import config
 from utils import set_seed, load_checkpoint
-from data.dataset import get_dataloaders
+from data.dataset import get_test_loader
 
 
 def parse_args():
@@ -65,7 +65,7 @@ def main():
     print(f"\nDevice: {device}  |  AMP: {'ON' if use_amp else 'OFF'}")
 
     ds_mode = "context" if "context" in args.model else "baseline"
-    _, _, test_loader, _ = get_dataloaders(
+    test_loader = get_test_loader(
         mode=ds_mode,
         context_k=args.context_k,
         batch_size=args.batch_size,

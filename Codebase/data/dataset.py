@@ -98,17 +98,37 @@ class MELDDataset(Dataset):
         }
 
 
+def get_test_loader(
+    mode: str = "context",
+    context_k: int = config.CONTEXT_K,
+    batch_size: int = config.BATCH_SIZE,
+    max_len: int = config.MAX_LEN,
+    num_workers: int = 0,
+):
+    """Chỉ load test set — dùng trong evaluate.py."""
+    tokenizer = BertTokenizer.from_pretrained(config.BERT_MODEL_NAME)
+    print("  Đang pre-tokenize test...", flush=True)
+    test_ds = MELDDataset(config.TEST_CSV, tokenizer, mode, context_k, max_len)
+    pin = torch.cuda.is_available()
+    return DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin,
+        persistent_workers=(num_workers > 0),
+    )
+
+
 def get_dataloaders(
     mode: str = "context",
     context_k: int = config.CONTEXT_K,
     batch_size: int = config.BATCH_SIZE,
     max_len: int = config.MAX_LEN,
     num_workers: int = 0,
-    load_test: bool = True,
 ):
     """
-    Tạo DataLoader cho train / val / test.
-    Đặt load_test=False khi training để bỏ qua tokenize test set (tiết kiệm thời gian).
+    Load train + val — dùng trong train.py.
     num_workers=0 trên Windows, 2 trên Colab/Linux.
     """
     tokenizer = BertTokenizer.from_pretrained(config.BERT_MODEL_NAME)
@@ -133,11 +153,4 @@ def get_dataloaders(
     train_loader = make_loader(train_ds, shuffle=True)
     val_loader   = make_loader(val_ds,   shuffle=False)
 
-    if load_test:
-        print("  Đang pre-tokenize test...", flush=True)
-        test_ds     = MELDDataset(config.TEST_CSV, tokenizer, mode, context_k, max_len)
-        test_loader = make_loader(test_ds, shuffle=False)
-    else:
-        test_loader = None
-
-    return train_loader, val_loader, test_loader, train_ds.get_labels()
+    return train_loader, val_loader, train_ds.get_labels()

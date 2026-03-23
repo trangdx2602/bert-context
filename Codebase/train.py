@@ -16,7 +16,7 @@ from sklearn.metrics import f1_score, accuracy_score
 
 import config
 from utils import set_seed, compute_class_weights, EarlyStopping, save_checkpoint
-from data.dataset import get_dataloaders
+from data.dataset import get_dataloaders, get_test_loader
 
 
 def parse_args():
@@ -131,13 +131,12 @@ def main():
 
     print("[1/4] Đang pre-tokenize và load dữ liệu...")
     ds_mode = "context" if "context" in args.model else "baseline"
-    train_loader, val_loader, _, train_labels = get_dataloaders(
+    train_loader, val_loader, train_labels = get_dataloaders(
         mode=ds_mode,
         context_k=args.context_k,
         batch_size=args.batch_size,
         max_len=args.max_len,
         num_workers=args.num_workers,
-        load_test=False,  # khi train không cần tokenize test set
     )
     print(f"  Train: {len(train_loader.dataset):,} samples")
     print(f"  Val  : {len(val_loader.dataset):,} samples\n")
