@@ -18,7 +18,7 @@ ID2LABEL   = {i: lab for i, lab in enumerate(LABEL_LIST)}
 BATCH_SIZE    = 32
 MAX_LEN       = 128      # câu MELD ngắn, k=5 ghép lại cũng chỉ ~100 token
 LEARNING_RATE = 2e-5
-EPOCHS        = 5
+EPOCHS        = 8
 WARMUP_RATIO  = 0.1
 WEIGHT_DECAY  = 0.01
 
