@@ -26,4 +26,4 @@ CONTEXT_K = 3            # số câu trước dùng làm context
 
 SEED                = 42
 DEVICE_STR          = "cuda"
-EARLY_STOP_PATIENCE = 3
+EARLY_STOP_PATIENCE = 4
