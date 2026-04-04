@@ -8,6 +8,7 @@ Cách dùng:
 import argparse
 import os
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
@@ -37,6 +38,10 @@ def parse_args():
                         help="DataLoader workers (0 trên Windows, 2-4 trên Linux)")
     parser.add_argument("--no_amp",      action="store_true",
                         help="Tắt Mixed Precision (dùng khi không có GPU hoặc debug)")
+    parser.add_argument("--disable_tensorboard", action="store_true",
+                        help="Khong ghi log TensorBoard")
+    parser.add_argument("--log_dir", type=str, default=None,
+                        help="Thu muc chua TensorBoard logs")
     return parser.parse_args()
 
 
@@ -129,6 +134,30 @@ def main():
     print(f"  Epochs           : {args.epochs}")
     print(f"{'='*60}\n")
 
+    tb_dir = args.log_dir or os.path.join(
+        config.BASE_DIR, "runs", f"{args.model}_k{args.context_k}"
+    )
+    writer = None
+    if not args.disable_tensorboard:
+        os.makedirs(tb_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=tb_dir)
+        writer.add_text(
+            "run_config",
+            "\n".join([
+                f"model: {args.model}",
+                f"context_k: {args.context_k}",
+                f"batch_size: {args.batch_size}",
+                f"accum_steps: {args.accum_steps}",
+                f"effective_batch: {eff_batch}",
+                f"lr: {args.lr}",
+                f"epochs: {args.epochs}",
+                f"max_len: {args.max_len}",
+                f"freeze_bert: {args.freeze_bert}",
+                f"amp: {use_amp}",
+            ]),
+        )
+        print(f"[TensorBoard] Logging vao: {tb_dir}\n")
+
     print("[1/4] Đang pre-tokenize và load dữ liệu...")
     ds_mode = "context" if "context" in args.model else "baseline"
     train_loader, val_loader, train_labels = get_dataloaders(
@@ -187,7 +216,20 @@ def main():
         print(f"  Train → loss: {tr_loss:.4f}  F1: {tr_f1:.4f}  Acc: {tr_acc:.4f}")
         print(f"  Val   → loss: {va_loss:.4f}  F1: {va_f1:.4f}  Acc: {va_acc:.4f}")
 
-        if early_stopping.best_value is None or va_f1 > early_stopping.best_value:
+        if writer is not None:
+            writer.add_scalar("train/loss", tr_loss, epoch)
+            writer.add_scalar("train/weighted_f1", tr_f1, epoch)
+            writer.add_scalar("train/accuracy", tr_acc, epoch)
+            writer.add_scalar("val/loss", va_loss, epoch)
+            writer.add_scalar("val/weighted_f1", va_f1, epoch)
+            writer.add_scalar("val/accuracy", va_acc, epoch)
+            writer.add_scalar("train/learning_rate", scheduler.get_last_lr()[0], epoch)
+
+        is_best = early_stopping.best_value is None or va_f1 > early_stopping.best_value
+        if writer is not None:
+            writer.add_scalar("val/is_best_checkpoint", int(is_best), epoch)
+
+        if is_best:
             save_checkpoint(model, optimizer, epoch, va_f1, ckpt_path)
 
         if early_stopping.step(va_f1):
@@ -196,6 +238,9 @@ def main():
 
     print(f"\nTraining xong! Checkpoint: {ckpt_path}")
     print(f"Best val F1 = {early_stopping.best_value:.4f}\n")
+    if writer is not None:
+        writer.flush()
+        writer.close()
 
 
 if __name__ == "__main__":
