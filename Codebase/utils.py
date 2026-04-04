@@ -2,6 +2,8 @@ import os
 import random
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.utils.class_weight import compute_class_weight
 
 
@@ -78,3 +80,27 @@ def load_checkpoint(model, path: str, optimizer=None, device="cpu"):
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     print(f"  [Checkpoint loaded] epoch={ckpt['epoch']}, val_f1={ckpt['f1']:.4f}")
     return ckpt["epoch"], ckpt["f1"]
+
+
+class FocalLoss(nn.Module):
+    """Focal Loss cho bài toán multi-class, hỗ trợ class weights."""
+
+    def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None):
+        super().__init__()
+        self.gamma = gamma
+        self.register_buffer("weight", weight if weight is not None else None)
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=-1)
+        probs = log_probs.exp()
+        target_log_probs = log_probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+        target_probs = probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+
+        focal_factor = (1.0 - target_probs).pow(self.gamma)
+        loss = -focal_factor * target_log_probs
+
+        if self.weight is not None:
+            class_weights = self.weight[targets]
+            loss = loss * class_weights
+
+        return loss.mean()

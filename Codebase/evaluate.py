@@ -20,20 +20,30 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate ERC model")
     parser.add_argument("--model",       type=str, default="bert_context",
                         choices=["bert_context"])
+    parser.add_argument("--input_mode",  type=str, default="context",
+                        choices=["baseline", "context", "speaker"])
     parser.add_argument("--context_k",   type=int, default=config.CONTEXT_K)
     parser.add_argument("--batch_size",  type=int, default=config.BATCH_SIZE)
     parser.add_argument("--max_len",     type=int, default=config.MAX_LEN)
+    parser.add_argument("--dropout",     type=float, default=0.1)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--checkpoint",  type=str, default=None)
+    parser.add_argument("--run_name",    type=str, default=None)
     parser.add_argument("--seed",        type=int, default=config.SEED)
     parser.add_argument("--no_amp",      action="store_true", help="Tắt Mixed Precision")
     return parser.parse_args()
 
 
-def load_model(model_name: str):
+def build_run_name(args) -> str:
+    if args.run_name:
+        return args.run_name
+    return f"{args.model}_{args.input_mode}_k{args.context_k}"
+
+
+def load_model(model_name: str, dropout_prob: float = 0.1):
     if model_name == "bert_context":
         from models.bert_context import ContextAwareBERT
-        return ContextAwareBERT()
+        return ContextAwareBERT(dropout_prob=dropout_prob)
     raise ValueError(f"Model không hỗ trợ: {model_name}")
 
 
@@ -64,9 +74,8 @@ def main():
     use_amp = (not args.no_amp) and (device.type == "cuda")
     print(f"\nDevice: {device}  |  AMP: {'ON' if use_amp else 'OFF'}")
 
-    ds_mode = "context" if "context" in args.model else "baseline"
     test_loader = get_test_loader(
-        mode=ds_mode,
+        mode=args.input_mode,
         context_k=args.context_k,
         batch_size=args.batch_size,
         max_len=args.max_len,
@@ -74,11 +83,10 @@ def main():
     )
     print(f"Test set: {len(test_loader.dataset):,} samples\n")
 
-    ckpt_path = args.checkpoint or (
-        f"{config.CHECKPOINT_DIR}/{args.model}_k{args.context_k}_best.pt"
-    )
+    run_name = build_run_name(args)
+    ckpt_path = args.checkpoint or f"{config.CHECKPOINT_DIR}/{run_name}_best.pt"
 
-    model = load_model(args.model)
+    model = load_model(args.model, dropout_prob=args.dropout)
     model.to(device)
     load_checkpoint(model, ckpt_path, device=device)
 
@@ -88,7 +96,7 @@ def main():
     acc = accuracy_score(all_labels, all_preds)
 
     print(f"\n{'='*60}")
-    print(f"  Model      : {args.model}  (context_k={args.context_k})")
+    print(f"  Model      : {args.model}  (mode={args.input_mode}, context_k={args.context_k})")
     print(f"  Accuracy   : {acc:.4f}")
     print(f"  Weighted F1: {wf1:.4f}")
     print(f"{'='*60}\n")

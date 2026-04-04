@@ -8,27 +8,41 @@ Cách dùng:
 import argparse
 import os
 import torch
-from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
 from sklearn.metrics import f1_score, accuracy_score
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ModuleNotFoundError:
+    SummaryWriter = None
+
 import config
-from utils import set_seed, compute_class_weights, EarlyStopping, save_checkpoint
-from data.dataset import get_dataloaders, get_test_loader
+from utils import FocalLoss, set_seed, compute_class_weights, EarlyStopping, save_checkpoint
+from data.dataset import get_dataloaders
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train ERC model")
     parser.add_argument("--model",       type=str,   default="bert_context",
                         choices=["bert_context"])
+    parser.add_argument("--input_mode",  type=str,   default="context",
+                        choices=["baseline", "context", "speaker"],
+                        help="Cach tao input tu hoi thoai")
     parser.add_argument("--context_k",   type=int,   default=config.CONTEXT_K)
     parser.add_argument("--epochs",      type=int,   default=config.EPOCHS)
     parser.add_argument("--batch_size",  type=int,   default=config.BATCH_SIZE)
     parser.add_argument("--lr",          type=float, default=config.LEARNING_RATE)
     parser.add_argument("--max_len",     type=int,   default=config.MAX_LEN)
+    parser.add_argument("--dropout",     type=float, default=0.1,
+                        help="Dropout cua classifier head")
+    parser.add_argument("--loss",        type=str,   default="ce",
+                        choices=["ce", "focal"],
+                        help="Ham loss de train")
+    parser.add_argument("--focal_gamma", type=float, default=2.0,
+                        help="Gamma cho focal loss")
     parser.add_argument("--seed",        type=int,   default=config.SEED)
     parser.add_argument("--freeze_bert", action="store_true",
                         help="Freeze BERT, chỉ train linear head")
@@ -42,13 +56,21 @@ def parse_args():
                         help="Khong ghi log TensorBoard")
     parser.add_argument("--log_dir", type=str, default=None,
                         help="Thu muc chua TensorBoard logs")
+    parser.add_argument("--run_name", type=str, default=None,
+                        help="Ten run/checkpoint de tranh de len nhau")
     return parser.parse_args()
 
 
-def load_model(model_name: str, freeze_bert: bool = False):
+def build_run_name(args) -> str:
+    if args.run_name:
+        return args.run_name
+    return f"{args.model}_{args.input_mode}_k{args.context_k}"
+
+
+def load_model(model_name: str, freeze_bert: bool = False, dropout_prob: float = 0.1):
     if model_name == "bert_context":
         from models.bert_context import ContextAwareBERT
-        return ContextAwareBERT(freeze_bert=freeze_bert)
+        return ContextAwareBERT(freeze_bert=freeze_bert, dropout_prob=dropout_prob)
     raise ValueError(f"Model không hỗ trợ: {model_name}")
 
 
@@ -126,25 +148,29 @@ def main():
     eff_batch = args.batch_size * args.accum_steps
     print(f"\n{'='*60}")
     print(f"  Model            : {args.model}")
+    print(f"  Input mode       : {args.input_mode}")
     print(f"  Context k        : {args.context_k}")
     print(f"  Device           : {device}")
     print(f"  Mixed Precision  : {'ON' if use_amp else 'OFF'}")
     print(f"  Batch size       : {args.batch_size}  (effective: {eff_batch})")
     print(f"  Accum steps      : {args.accum_steps}")
+    print(f"  Max len          : {args.max_len}")
+    print(f"  Dropout          : {args.dropout}")
+    print(f"  Loss             : {args.loss}")
     print(f"  Epochs           : {args.epochs}")
     print(f"{'='*60}\n")
 
-    tb_dir = args.log_dir or os.path.join(
-        config.BASE_DIR, "runs", f"{args.model}_k{args.context_k}"
-    )
+    run_name = build_run_name(args)
+    tb_dir = args.log_dir or os.path.join(config.BASE_DIR, "runs", run_name)
     writer = None
-    if not args.disable_tensorboard:
+    if not args.disable_tensorboard and SummaryWriter is not None:
         os.makedirs(tb_dir, exist_ok=True)
         writer = SummaryWriter(log_dir=tb_dir)
         writer.add_text(
             "run_config",
             "\n".join([
                 f"model: {args.model}",
+                f"input_mode: {args.input_mode}",
                 f"context_k: {args.context_k}",
                 f"batch_size: {args.batch_size}",
                 f"accum_steps: {args.accum_steps}",
@@ -157,11 +183,12 @@ def main():
             ]),
         )
         print(f"[TensorBoard] Logging vao: {tb_dir}\n")
+    elif not args.disable_tensorboard:
+        print("[TensorBoard] Package chua duoc cai dat, bo qua ghi log.\n")
 
     print("[1/4] Đang pre-tokenize và load dữ liệu...")
-    ds_mode = "context" if "context" in args.model else "baseline"
     train_loader, val_loader, train_labels = get_dataloaders(
-        mode=ds_mode,
+        mode=args.input_mode,
         context_k=args.context_k,
         batch_size=args.batch_size,
         max_len=args.max_len,
@@ -172,10 +199,14 @@ def main():
 
     class_weights = compute_class_weights(train_labels, config.NUM_LABELS)
     print("[2/4] Class weights:", [f"{w:.3f}" for w in class_weights.tolist()])
-    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights.to(device))
+    class_weights = class_weights.to(device)
+    if args.loss == "focal":
+        loss_fn = FocalLoss(gamma=args.focal_gamma, weight=class_weights)
+    else:
+        loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
     print("\n[3/4] Load model...")
-    model = load_model(args.model, freeze_bert=args.freeze_bert)
+    model = load_model(args.model, freeze_bert=args.freeze_bert, dropout_prob=args.dropout)
     model.to(device)
 
     # Tổng số lần cập nhật optimizer (tính đến gradient accumulation)
@@ -198,7 +229,7 @@ def main():
     early_stopping = EarlyStopping(patience=config.EARLY_STOP_PATIENCE, mode="max")
     ckpt_path = os.path.join(
         config.CHECKPOINT_DIR,
-        f"{args.model}_k{args.context_k}_best.pt"
+        f"{run_name}_best.pt"
     )
 
     print("\n[4/4] Bắt đầu training...\n")
