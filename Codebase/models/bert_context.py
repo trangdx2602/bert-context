@@ -33,18 +33,32 @@ class ContextAwareBERT(nn.Module):
                 param.requires_grad = False
 
         hidden_size = self.bert.config.hidden_size  # 768
+        pooled_size = hidden_size * 2  # ket hop [CLS] va mean pooling
+        mlp_hidden_size = hidden_size
 
-        self.dropout    = nn.Dropout(dropout_prob)
-        self.classifier = nn.Linear(hidden_size, num_labels)
+        self.dropout = nn.Dropout(dropout_prob)
+        self.classifier = nn.Sequential(
+            nn.Linear(pooled_size, mlp_hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout_prob),
+            nn.Linear(mlp_hidden_size, num_labels),
+        )
 
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
 
-        # Lấy biểu diễn [CLS] token (vị trí 0) làm đại diện cho cả chuỗi
         cls_output = outputs.last_hidden_state[:, 0, :]
-        cls_output = self.dropout(cls_output)
 
-        logits = self.classifier(cls_output)
+        # Mean pooling tren cac token hop le de bo sung thong tin cho [CLS].
+        mask = attention_mask.unsqueeze(-1).type_as(outputs.last_hidden_state)
+        masked_hidden = outputs.last_hidden_state * mask
+        token_count = mask.sum(dim=1).clamp(min=1.0)
+        mean_output = masked_hidden.sum(dim=1) / token_count
+
+        pooled_output = torch.cat([cls_output, mean_output], dim=-1)
+        pooled_output = self.dropout(pooled_output)
+
+        logits = self.classifier(pooled_output)
         return logits
 
     def get_param_groups(self, lr_bert: float, lr_head: float):
