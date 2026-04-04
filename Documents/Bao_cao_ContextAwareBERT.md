@@ -400,7 +400,53 @@ Neu can phat trien them trong tuong lai, nhom co the mo rong theo cac huong:
 - Khai thac context dai han hon
 - Su dung cac kien truc ERC chuyen biet hon cho hoi thoai
 
-## 15. Goi y cach trinh bay tren slide
+## 15. Ket qua hien tai va huong cai thien
+
+### 15.1. Ket qua baseline da chay lai tren Colab
+
+Ket qua test moi nhat cua `Context-aware BERT` la:
+
+| Cau hinh | Accuracy | Weighted F1 | Best val F1 |
+|---------|----------|-------------|-------------|
+| `k = 1` | **0.5870** | **0.5974** | 0.5712 |
+| `k = 3` | 0.5862 | 0.5918 | **0.5875** |
+| `k = 5` | 0.5816 | 0.5912 | 0.5821 |
+
+Nhan xet:
+
+- Tren `test`, cau hinh `k = 1` dang tot nhat.
+- Tren `validation`, cau hinh `k = 3` co `best val F1` cao nhat.
+- Dieu nay cho thay checkpoint tot nhat tren validation chua chac la cau hinh tong quat hoa tot nhat tren test.
+
+### 15.2. Pham vi cai thien cua Trang
+
+Phan cua Trang chi tap trung vao `Context-aware BERT`, vi vay huong cai thien duoc chon la:
+
+- Giu `input_mode = context`
+- Tang `max_len` de giam truncate
+- Dung `Focal Loss` de ho tro cac lop hiem
+- Tang `dropout` de giam overfitting
+
+Khong dua `speaker-aware BERT` vao phan cai thien chinh, vi do la huong rieng cua thanh vien khac.
+
+### 15.3. Thu nghiem cai thien de thu
+
+Dot 1:
+
+- `context + k=1 + max_len=160 + focal + dropout=0.2`
+- `context + k=3 + max_len=160 + focal + dropout=0.2`
+
+Dot 2 neu can:
+
+- `context + k=5 + max_len=160 + focal + dropout=0.2`
+- `context + k=1 + max_len=192 + focal + dropout=0.2`
+
+Muc tieu:
+
+- Kiem tra xem co day duoc `Weighted F1` tren `test` vuot `0.6` hay khong.
+- Neu chua vuot `0.6`, van chon cau hinh co `Weighted F1` cao nhat va giai thich ly do.
+
+## 16. Goi y cach trinh bay tren slide
 
 Neu chuyen noi dung nay thanh slide, co the chia thanh 8 slide chinh:
 
@@ -413,7 +459,7 @@ Neu chuyen noi dung nay thanh slide, co the chia thanh 8 slide chinh:
 7. Thuc nghiem voi `k = 1, 3, 5`
 8. Uu diem, han che va huong phat trien
 
-## 16. Nguon tham chieu trong project
+## 17. Nguon tham chieu trong project
 
 Noi dung bao cao nay duoc viet dua tren cac thanh phan chinh trong project:
 
