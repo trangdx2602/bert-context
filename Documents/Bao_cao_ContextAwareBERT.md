@@ -446,6 +446,31 @@ Muc tieu:
 - Kiem tra xem co day duoc `Weighted F1` tren `test` vuot `0.6` hay khong.
 - Neu chua vuot `0.6`, van chon cau hinh co `Weighted F1` cao nhat va giai thich ly do.
 
+### 15.4. Ket qua cai thien da chay
+
+Hai cau hinh cai thien da duoc chay tren Colab:
+
+| Cau hinh cai thien | Accuracy | Weighted F1 | Best val F1 |
+|---------|----------|-------------|-------------|
+| `context + focal + k=1 + max_len=160` | 0.5824 | 0.5898 | 0.5571 |
+| `context + focal + k=3 + max_len=160` | 0.5678 | 0.5806 | 0.5695 |
+
+Nhan xet:
+
+- Ca hai cau hinh cai thien deu khong vuot duoc baseline tot nhat (`k=1`, Weighted F1 = `0.5974`).
+- Viec tang `max_len`, dung `Focal Loss` va tang `dropout` trong truong hop nay chua dem lai cai thien ro rang.
+- Dieu nay goi y rang gioi han hien tai co the nam o chinh cach bieu dien context cua mo hinh, chu khong chi nam o hyperparameter.
+
+### 15.5. Doan nhan xet de dua vao bao cao va slide
+
+Doan ngan cho bao cao:
+
+> Nhom da thu nghiem them cac huong toi uu trong dung pham vi Context-aware BERT, cu the la tang do dai chuoi dau vao (`max_len = 160`), su dung `Focal Loss` va tang `dropout` de giam overfitting. Tuy nhien, cac cau hinh cai thien nay khong vuot duoc baseline tot nhat. Cau hinh `k = 1` van cho ket qua test tot nhat voi Weighted F1 = `0.5974`. Ket qua nay cho thay viec tinh chinh qua trinh huan luyen thoi chua du de nang cao dang ke kha nang tong quat hoa cua mo hinh.
+
+Doan ngan cho slide:
+
+> Baseline `Context-aware BERT` voi `k=1` van la cau hinh tot nhat tren test (`Weighted F1 = 0.5974`). Cac thu nghiem cai thien bang `Focal Loss`, `max_len=160` va `dropout=0.2` chua vuot duoc baseline, cho thay gioi han hien tai co the nam o cach mo hinh bieu dien context.
+
 ## 16. Goi y cach trinh bay tren slide
 
 Neu chuyen noi dung nay thanh slide, co the chia thanh 8 slide chinh:
