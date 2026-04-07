@@ -1,37 +1,47 @@
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import BertTokenizer
 from collections import defaultdict
+from torch.utils.data import DataLoader, Dataset
+from transformers import BertTokenizer
 
 import config
 
 
 def _load_and_group(csv_path: str) -> dict:
-    """Đọc CSV và nhóm utterance theo từng hội thoại, sắp xếp theo thứ tự xuất hiện."""
+    """Doc CSV va nhom utterance theo tung hoi thoai, sap xep theo thu tu xuat hien."""
     df = pd.read_csv(csv_path)
     df.columns = df.columns.str.strip()
     df = df.sort_values(["Dialogue_ID", "Utterance_ID"])
 
     dialogues = defaultdict(list)
     for _, row in df.iterrows():
-        dialogues[row["Dialogue_ID"]].append({
-            "utterance": str(row["Utterance"]).strip(),
-            "speaker":   str(row["Speaker"]).strip(),
-            "emotion":   str(row["Emotion"]).strip().lower(),
-        })
+        dialogues[row["Dialogue_ID"]].append(
+            {
+                "utterance": str(row["Utterance"]).strip(),
+                "speaker": str(row["Speaker"]).strip(),
+                "emotion": str(row["Emotion"]).strip().lower(),
+            }
+        )
     return dict(dialogues)
 
 
-def _build_text(dialogue: list, t: int, mode: str, context_k: int) -> str:
-    """Tạo chuỗi input theo mode (baseline / context / speaker)."""
+def _build_text(
+    dialogue: list,
+    t: int,
+    mode: str,
+    context_k: int,
+    target_prefix: str = "",
+) -> str:
+    """Tao chuoi input theo mode (baseline / context / speaker)."""
     if mode == "baseline":
         return dialogue[t]["utterance"]
 
     start = max(0, t - context_k)
     if mode == "context":
-        parts = [dialogue[i]["utterance"] for i in range(start, t + 1)]
-    else:  # speaker
+        parts = [dialogue[i]["utterance"] for i in range(start, t)]
+        target = dialogue[t]["utterance"]
+        parts.append(f"{target_prefix}{target}" if target_prefix else target)
+    else:
         parts = [
             f"{dialogue[i]['speaker']}: {dialogue[i]['utterance']}"
             for i in range(start, t + 1)
@@ -41,9 +51,8 @@ def _build_text(dialogue: list, t: int, mode: str, context_k: int) -> str:
 
 class MELDDataset(Dataset):
     """
-    Dataset MELD với pre-tokenization.
-    Toàn bộ dữ liệu được tokenize 1 lần khi khởi tạo, lưu dưới dạng tensor,
-    giúp __getitem__ chỉ cần index mà không xử lý gì thêm.
+    Dataset MELD voi pre-tokenization.
+    Toan bo du lieu duoc tokenize 1 lan khi khoi tao, giup __getitem__ chi con index.
     """
 
     def __init__(
@@ -54,13 +63,15 @@ class MELDDataset(Dataset):
         context_k: int = config.CONTEXT_K,
         max_len: int = config.MAX_LEN,
         label2id: dict = config.LABEL2ID,
+        target_prefix: str = "",
     ):
-        assert mode in ("baseline", "context", "speaker"), \
-            f"mode phải là 'baseline', 'context' hoặc 'speaker', nhận được: {mode}"
+        assert mode in ("baseline", "context", "speaker"), (
+            f"mode phai la 'baseline', 'context' hoac 'speaker', nhan duoc: {mode}"
+        )
 
-        # Thu thập text và nhãn từ tất cả hội thoại
-        all_texts  = []
+        all_texts = []
         all_labels = []
+        raw_lengths = []
 
         dialogues = _load_and_group(csv_path)
         for dialogue in dialogues.values():
@@ -68,10 +79,17 @@ class MELDDataset(Dataset):
                 label_str = utt_info["emotion"]
                 if label_str not in label2id:
                     continue
-                all_texts.append(_build_text(dialogue, t, mode, context_k))
+                text = _build_text(
+                    dialogue,
+                    t,
+                    mode,
+                    context_k,
+                    target_prefix=target_prefix,
+                )
+                raw_lengths.append(len(tokenizer.tokenize(text)))
+                all_texts.append(text)
                 all_labels.append(label2id[label_str])
 
-        # Tokenize toàn bộ 1 lần (nhanh hơn nhiều so với tokenize trong __getitem__)
         encodings = tokenizer(
             all_texts,
             max_length=max_len,
@@ -80,21 +98,33 @@ class MELDDataset(Dataset):
             return_tensors="pt",
         )
 
-        self.input_ids      = encodings["input_ids"]
+        truncated_count = sum(length > max_len for length in raw_lengths)
+        self.stats = {
+            "num_samples": len(all_labels),
+            "avg_tokens": (sum(raw_lengths) / len(raw_lengths)) if raw_lengths else 0.0,
+            "max_tokens": max(raw_lengths) if raw_lengths else 0,
+            "truncated_count": truncated_count,
+            "truncated_ratio": (truncated_count / len(raw_lengths)) if raw_lengths else 0.0,
+        }
+
+        self.input_ids = encodings["input_ids"]
         self.attention_mask = encodings["attention_mask"]
-        self.labels         = torch.tensor(all_labels, dtype=torch.long)
+        self.labels = torch.tensor(all_labels, dtype=torch.long)
 
     def get_labels(self) -> list:
         return self.labels.tolist()
+
+    def get_stats(self) -> dict:
+        return self.stats
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
         return {
-            "input_ids":      self.input_ids[idx],
+            "input_ids": self.input_ids[idx],
             "attention_mask": self.attention_mask[idx],
-            "label":          self.labels[idx],
+            "label": self.labels[idx],
         }
 
 
@@ -104,11 +134,19 @@ def get_test_loader(
     batch_size: int = config.BATCH_SIZE,
     max_len: int = config.MAX_LEN,
     num_workers: int = 0,
+    target_prefix: str = "",
 ):
-    """Chỉ load test set — dùng trong evaluate.py."""
+    """Chi load test set, dung trong evaluate.py."""
     tokenizer = BertTokenizer.from_pretrained(config.BERT_MODEL_NAME)
-    print("  Đang pre-tokenize test...", flush=True)
-    test_ds = MELDDataset(config.TEST_CSV, tokenizer, mode, context_k, max_len)
+    print("  Dang pre-tokenize test...", flush=True)
+    test_ds = MELDDataset(
+        config.TEST_CSV,
+        tokenizer,
+        mode,
+        context_k,
+        max_len,
+        target_prefix=target_prefix,
+    )
     pin = torch.cuda.is_available()
     return DataLoader(
         test_ds,
@@ -126,17 +164,32 @@ def get_dataloaders(
     batch_size: int = config.BATCH_SIZE,
     max_len: int = config.MAX_LEN,
     num_workers: int = 0,
+    target_prefix: str = "",
 ):
     """
-    Load train + val — dùng trong train.py.
-    num_workers=0 trên Windows, 2 trên Colab/Linux.
+    Load train + val, dung trong train.py.
+    num_workers=0 tren Windows, 2 tren Colab/Linux.
     """
     tokenizer = BertTokenizer.from_pretrained(config.BERT_MODEL_NAME)
 
-    print("  Đang pre-tokenize train...", flush=True)
-    train_ds = MELDDataset(config.TRAIN_CSV, tokenizer, mode, context_k, max_len)
-    print("  Đang pre-tokenize val...",   flush=True)
-    val_ds   = MELDDataset(config.VAL_CSV,   tokenizer, mode, context_k, max_len)
+    print("  Dang pre-tokenize train...", flush=True)
+    train_ds = MELDDataset(
+        config.TRAIN_CSV,
+        tokenizer,
+        mode,
+        context_k,
+        max_len,
+        target_prefix=target_prefix,
+    )
+    print("  Dang pre-tokenize val...", flush=True)
+    val_ds = MELDDataset(
+        config.VAL_CSV,
+        tokenizer,
+        mode,
+        context_k,
+        max_len,
+        target_prefix=target_prefix,
+    )
 
     pin = torch.cuda.is_available()
 
@@ -151,6 +204,12 @@ def get_dataloaders(
         )
 
     train_loader = make_loader(train_ds, shuffle=True)
-    val_loader   = make_loader(val_ds,   shuffle=False)
+    val_loader = make_loader(val_ds, shuffle=False)
 
-    return train_loader, val_loader, train_ds.get_labels()
+    return (
+        train_loader,
+        val_loader,
+        train_ds.get_labels(),
+        train_ds.get_stats(),
+        val_ds.get_stats(),
+    )

@@ -1,108 +1,96 @@
-# Context-aware BERT – Nhận diện cảm xúc trong hội thoại
+# Context-aware BERT - Nhan dien cam xuc trong hoi thoai
 
-**Bài toán:** Emotion Recognition in Conversation (ERC) trên dataset MELD
-**Mô hình:** Context-aware BERT – ghép k câu trước vào input để học ngữ cảnh hội thoại
-**Người thực hiện:** Tráng – Nhóm 9
-
----
-
-## Ý tưởng
-
-Thay vì phân loại từng câu đơn lẻ như BERT Baseline, mô hình nhận input là chuỗi k câu trước ghép với câu hiện tại:
-
-```
-u_{t-k} [SEP] u_{t-k+1} [SEP] ... [SEP] u_t
-```
-
-BERT mã hóa toàn bộ chuỗi, lấy embedding `[CLS]` làm đại diện, rồi phân loại cảm xúc của `u_t`.
-
-| Mô hình | Input |
-|---------|-------|
-| BERT Baseline | `u_t` |
-| **Context-aware BERT** | `u_{t-k} [SEP] ... [SEP] u_t` |
+**Bai toan:** Emotion Recognition in Conversation (ERC) tren dataset MELD  
+**Mo hinh:** Context-aware BERT - ghep k cau truoc vao input de hoc ngu canh hoi thoai  
+**Nguoi thuc hien:** Trang - Nhom 9
 
 ---
 
-## Cấu trúc thư mục
+## Y tuong
 
+Thay vi phan loai tung cau don le nhu BERT baseline, mo hinh nhan input la chuoi k cau truoc ghep voi cau hien tai:
+
+```text
+u_{t-k} [SEP] ... [SEP] u_t
 ```
-Codebase/
-├── config.py           # Cấu hình chung (paths, hyperparameters)
-├── utils.py            # EarlyStopping, class weights, checkpoint
-├── train.py            # Training loop
-├── evaluate.py         # Đánh giá trên test set
-├── requirements.txt
-├── data/
-│   └── dataset.py      # MELDDataset – build context window, tokenize
-├── models/
-│   └── bert_context.py # ContextAwareBERT
-└── checkpoints/        # Tự động tạo khi train
-```
+
+Repo nay da bo sung cac che do de toi uu muc tieu vuot `0.60` weighted F1 tren test:
+- `input_mode=baseline` de tao moc doi chung cong bang voi bai cua Hai
+- `pooling=cls` hoac `cls_mean`
+- `head_type=linear` hoac `mlp`
+- learning rate tach rieng cho BERT va classifier head
+- class weights co the tat, dung balanced, hoac dung `sqrt_inv`
+- `target_prefix` de danh dau cau dich ma khong dua thong tin speaker
 
 ---
 
-## Cài đặt
+## Cai dat
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Đặt 3 file CSV của MELD vào thư mục `Documents/` (cùng cấp với `Codebase/`):
+Dat 3 file CSV cua MELD vao thu muc `Documents/`:
 - `train_sent_emo.csv`
 - `val_sent_emo.csv`
 - `test_sent_emo.csv`
 
 ---
 
-## Chạy thực nghiệm
+## Ke hoach chay thu nghiem
 
-### Huấn luyện
-
-```bash
-# k=3 (mặc định)
-python train.py --model bert_context --context_k 3
-
-# Dùng gradient accumulation (effective batch = 32)
-python train.py --model bert_context --context_k 3 --batch_size 8 --accum_steps 4
-
-# Thử nghiệm k=1, k=5
-python train.py --model bert_context --context_k 1
-python train.py --model bert_context --context_k 5
-
-# Chạy trên CPU
-python train.py --model bert_context --context_k 3 --no_amp
-```
-
-### Đánh giá
+### 1. Baseline doi chung
 
 ```bash
-python evaluate.py --model bert_context --context_k 3
-
-# Chỉ định checkpoint cụ thể
-python evaluate.py --model bert_context --context_k 3 --checkpoint checkpoints/bert_context_k3_best.pt
+python train.py --input_mode baseline --context_k 1 --pooling cls --head_type linear --loss ce --class_weight_mode none --label_smoothing 0.0 --run_name bert_baseline_clean
+python evaluate.py --input_mode baseline --context_k 1 --pooling cls --head_type linear --run_name bert_baseline_clean
 ```
 
-### Chạy trên Google Colab
+### 2. Nhanh chinh de day context-aware BERT vuot 0.60
 
-Mở file `ERC_ContextBERT_Experiments.ipynb` ở thư mục gốc, bật GPU T4 và chạy tuần tự từng cell.
+```bash
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --loss ce --class_weight_mode none --label_smoothing 0.0 --lr 1e-5 --lr_head 5e-5 --run_name bert_context_k1_main
+python evaluate.py --input_mode context --context_k 1 --pooling cls --head_type linear --run_name bert_context_k1_main
+```
+
+### 3. Cac bien the nen thu tiep
+
+```bash
+# Tang learning rate cho classifier head
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --loss ce --class_weight_mode none --label_smoothing 0.0 --lr 1e-5 --lr_head 1e-4 --run_name bert_context_k1_head1e4
+
+# So sanh pooling cls_mean
+python train.py --input_mode context --context_k 1 --pooling cls_mean --head_type linear --loss ce --class_weight_mode none --label_smoothing 0.0 --lr 1e-5 --lr_head 5e-5 --run_name bert_context_k1_clsmean
+
+# Class weights nhe hon
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --loss ce --class_weight_mode sqrt_inv --label_smoothing 0.0 --lr 1e-5 --lr_head 5e-5 --run_name bert_context_k1_sqrtinv
+
+# Danh dau cau dich
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --loss ce --class_weight_mode none --label_smoothing 0.0 --lr 1e-5 --lr_head 5e-5 --target_prefix "TARGET: " --run_name bert_context_k1_target
+```
+
+### 4. Cau hinh ho tro
+
+```bash
+# Dung gradient accumulation
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --batch_size 8 --accum_steps 4 --run_name bert_context_k1_accum
+
+# Chay tren CPU
+python train.py --input_mode context --context_k 1 --pooling cls --head_type linear --no_amp
+```
 
 ---
 
-## Kết quả thực nghiệm
+## Ghi chu khi doc log
 
-*(Điền sau khi chạy xong)*
-
-| Mô hình | Context k | Accuracy | Weighted F1 |
-|---------|-----------|----------|-------------|
-| BERT Baseline | – | | |
-| Context-aware BERT | k=1 | | |
-| Context-aware BERT | k=3 | | |
-| Context-aware BERT | k=5 | | |
+- `train.py` se in them thong ke tokenization va ty le truncate cua train/val.
+- Validation log se co `weighted F1`, `per-class F1`, va `confusion matrix`.
+- Checkpoint van duoc luu theo `val weighted F1` tot nhat.
 
 ---
 
 ## Dataset MELD
 
-- ~13,000 utterances, 7 nhãn cảm xúc: `neutral, surprise, fear, sadness, joy, disgust, anger`
-- Trích từ series *Friends*, có sẵn tập train / val / test
-- Cột dùng: `Utterance`, `Speaker`, `Emotion`, `Dialogue_ID`, `Utterance_ID`
+- ~13,000 utterances, 7 nhan cam xuc: `neutral, surprise, fear, sadness, joy, disgust, anger`
+- Trich tu series *Friends*, co san tap train / val / test
+- Cot dung: `Utterance`, `Speaker`, `Emotion`, `Dialogue_ID`, `Utterance_ID`
