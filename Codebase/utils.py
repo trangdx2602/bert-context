@@ -60,16 +60,26 @@ class EarlyStopping:
         return self.should_stop
 
 
-def save_checkpoint(model, optimizer, epoch: int, f1: float, path: str):
+def save_checkpoint(
+    model,
+    optimizer,
+    epoch: int,
+    f1: float,
+    path: str,
+    metric_name: str = "val_f1",
+    metrics: dict | None = None,
+):
     """Lưu checkpoint."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({
         "epoch": epoch,
         "f1": f1,
+        "metric_name": metric_name,
+        "metrics": metrics or {},
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
     }, path)
-    print(f"  [Checkpoint saved] epoch={epoch}, val_f1={f1:.4f} → {path}")
+    print(f"  [Checkpoint saved] epoch={epoch}, {metric_name}={f1:.4f} -> {path}")
 
 
 def load_checkpoint(model, path: str, optimizer=None, device="cpu"):
@@ -78,7 +88,8 @@ def load_checkpoint(model, path: str, optimizer=None, device="cpu"):
     model.load_state_dict(ckpt["model_state_dict"])
     if optimizer is not None:
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-    print(f"  [Checkpoint loaded] epoch={ckpt['epoch']}, val_f1={ckpt['f1']:.4f}")
+    metric_name = ckpt.get("metric_name", "val_f1")
+    print(f"  [Checkpoint loaded] epoch={ckpt['epoch']}, {metric_name}={ckpt['f1']:.4f}")
     return ckpt["epoch"], ckpt["f1"]
 
 

@@ -47,6 +47,13 @@ def parse_args():
         help="Cach ap dung class weights",
     )
     parser.add_argument(
+        "--train_sampler_mode",
+        type=str,
+        default="none",
+        choices=["none", "balanced", "sqrt_inv"],
+        help="Can bang xac suat lay mau trong train loader",
+    )
+    parser.add_argument(
         "--label_smoothing",
         type=float,
         default=0.0,
@@ -69,6 +76,13 @@ def parse_args():
     parser.add_argument("--disable_tensorboard", action="store_true")
     parser.add_argument("--log_dir", type=str, default=None)
     parser.add_argument("--run_name", type=str, default=None)
+    parser.add_argument(
+        "--selection_metric",
+        type=str,
+        default="macro_f1",
+        choices=["weighted_f1", "macro_f1"],
+        help="Metric dung de luu checkpoint va early stopping",
+    )
     return parser.parse_args()
 
 
@@ -127,9 +141,10 @@ def train_one_epoch(model, loader, optimizer, scheduler, loss_fn, scaler, device
         all_labels.extend(labels.cpu().tolist())
 
     avg_loss = total_loss / len(loader)
-    f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    weighted_f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
     acc = accuracy_score(all_labels, all_preds)
-    return avg_loss, f1, acc
+    return avg_loss, weighted_f1, macro_f1, acc
 
 
 @torch.no_grad()
@@ -152,7 +167,8 @@ def evaluate(model, loader, loss_fn, device, use_amp: bool, num_labels: int):
         all_labels.extend(labels.cpu().tolist())
 
     avg_loss = total_loss / len(loader)
-    f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    weighted_f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
     acc = accuracy_score(all_labels, all_preds)
     per_class_f1 = f1_score(
         all_labels,
@@ -162,7 +178,7 @@ def evaluate(model, loader, loss_fn, device, use_amp: bool, num_labels: int):
         zero_division=0,
     )
     cm = confusion_matrix(all_labels, all_preds, labels=list(range(num_labels)))
-    return avg_loss, f1, acc, per_class_f1, cm
+    return avg_loss, weighted_f1, macro_f1, acc, per_class_f1, cm
 
 
 def summarize_dataset_stats(name: str, stats: dict):
@@ -207,10 +223,12 @@ def main():
     print(f"  Dropout          : {args.dropout}")
     print(f"  Loss             : {args.loss}")
     print(f"  Class weights    : {args.class_weight_mode}")
+    print(f"  Train sampler    : {args.train_sampler_mode}")
     print(f"  Label smoothing  : {args.label_smoothing}")
     print(f"  Pooling          : {args.pooling}")
     print(f"  Head type        : {args.head_type}")
     print(f"  Target prefix    : {repr(args.target_prefix)}")
+    print(f"  Selection metric : {args.selection_metric}")
     print(f"  Epochs           : {args.epochs}")
     print(f"{'=' * 60}\n")
 
@@ -237,10 +255,12 @@ def main():
                     f"freeze_bert: {args.freeze_bert}",
                     f"amp: {use_amp}",
                     f"class_weight_mode: {args.class_weight_mode}",
+                    f"train_sampler_mode: {args.train_sampler_mode}",
                     f"label_smoothing: {args.label_smoothing}",
                     f"pooling: {args.pooling}",
                     f"head_type: {args.head_type}",
                     f"target_prefix: {args.target_prefix}",
+                    f"selection_metric: {args.selection_metric}",
                 ]
             ),
         )
@@ -256,6 +276,7 @@ def main():
         max_len=args.max_len,
         num_workers=args.num_workers,
         target_prefix=args.target_prefix,
+        train_sampler_mode=args.train_sampler_mode,
     )
     print(f"  Train: {len(train_loader.dataset):,} samples")
     print(f"  Val  : {len(val_loader.dataset):,} samples")
@@ -309,7 +330,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs}")
 
-        tr_loss, tr_f1, tr_acc = train_one_epoch(
+        tr_loss, tr_weighted_f1, tr_macro_f1, tr_acc = train_one_epoch(
             model,
             train_loader,
             optimizer,
@@ -320,7 +341,7 @@ def main():
             args.accum_steps,
             use_amp,
         )
-        va_loss, va_f1, va_acc, va_per_class_f1, va_cm = evaluate(
+        va_loss, va_weighted_f1, va_macro_f1, va_acc, va_per_class_f1, va_cm = evaluate(
             model,
             val_loader,
             loss_fn,
@@ -329,8 +350,14 @@ def main():
             config.NUM_LABELS,
         )
 
-        print(f"  Train -> loss: {tr_loss:.4f}  F1: {tr_f1:.4f}  Acc: {tr_acc:.4f}")
-        print(f"  Val   -> loss: {va_loss:.4f}  F1: {va_f1:.4f}  Acc: {va_acc:.4f}")
+        print(
+            f"  Train -> loss: {tr_loss:.4f}  "
+            f"weighted_F1: {tr_weighted_f1:.4f}  macro_F1: {tr_macro_f1:.4f}  Acc: {tr_acc:.4f}"
+        )
+        print(
+            f"  Val   -> loss: {va_loss:.4f}  "
+            f"weighted_F1: {va_weighted_f1:.4f}  macro_F1: {va_macro_f1:.4f}  Acc: {va_acc:.4f}"
+        )
         print(
             "  Val F1 per class:",
             ", ".join(
@@ -341,19 +368,34 @@ def main():
 
         if writer is not None:
             writer.add_scalar("train/loss", tr_loss, epoch)
-            writer.add_scalar("train/weighted_f1", tr_f1, epoch)
+            writer.add_scalar("train/weighted_f1", tr_weighted_f1, epoch)
+            writer.add_scalar("train/macro_f1", tr_macro_f1, epoch)
             writer.add_scalar("train/accuracy", tr_acc, epoch)
             writer.add_scalar("val/loss", va_loss, epoch)
-            writer.add_scalar("val/weighted_f1", va_f1, epoch)
+            writer.add_scalar("val/weighted_f1", va_weighted_f1, epoch)
+            writer.add_scalar("val/macro_f1", va_macro_f1, epoch)
             writer.add_scalar("val/accuracy", va_acc, epoch)
             writer.add_scalar("train/learning_rate_bert", optimizer.param_groups[0]["lr"], epoch)
             writer.add_scalar("train/learning_rate_head", optimizer.param_groups[1]["lr"], epoch)
             for idx, label in enumerate(config.LABEL_LIST):
                 writer.add_scalar(f"val_f1_per_class/{label}", va_per_class_f1[idx], epoch)
 
-        is_best = early_stopping.best_value is None or va_f1 > early_stopping.best_value
+        selection_value = va_macro_f1 if args.selection_metric == "macro_f1" else va_weighted_f1
+        is_best = early_stopping.best_value is None or selection_value > early_stopping.best_value
         if is_best:
-            save_checkpoint(model, optimizer, epoch, va_f1, ckpt_path)
+            save_checkpoint(
+                model,
+                optimizer,
+                epoch,
+                selection_value,
+                ckpt_path,
+                metric_name=args.selection_metric,
+                metrics={
+                    "val_weighted_f1": va_weighted_f1,
+                    "val_macro_f1": va_macro_f1,
+                    "val_accuracy": va_acc,
+                },
+            )
 
         print("  Val confusion matrix:")
         header = "        " + "  ".join(f"{l[:4]:>5}" for l in config.LABEL_LIST)
@@ -362,7 +404,7 @@ def main():
             label = config.LABEL_LIST[i][:7]
             print(f"{label:<8} " + "  ".join(f"{v:>5}" for v in row))
 
-        stop = early_stopping.step(va_f1)
+        stop = early_stopping.step(selection_value)
         if stop:
             print(f"  Early stopping triggered after epoch {epoch}.")
             break

@@ -111,12 +111,14 @@ def main():
 
     all_labels, all_preds = predict(model, test_loader, device, use_amp)
     wf1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
     acc = accuracy_score(all_labels, all_preds)
 
     print(f"\n{'=' * 60}")
     print(f"  Model      : {args.model}  (mode={args.input_mode}, context_k={args.context_k})")
     print(f"  Accuracy   : {acc:.4f}")
     print(f"  Weighted F1: {wf1:.4f}")
+    print(f"  Macro F1   : {macro_f1:.4f}")
     print(f"{'=' * 60}\n")
 
     print("Classification Report:")

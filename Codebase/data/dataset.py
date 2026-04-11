@@ -1,7 +1,7 @@
 import pandas as pd
 import torch
 from collections import defaultdict
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import BertTokenizer
 
 import config
@@ -165,6 +165,7 @@ def get_dataloaders(
     max_len: int = config.MAX_LEN,
     num_workers: int = 0,
     target_prefix: str = "",
+    train_sampler_mode: str = "none",
 ):
     """
     Load train + val, dung trong train.py.
@@ -193,17 +194,35 @@ def get_dataloaders(
 
     pin = torch.cuda.is_available()
 
-    def make_loader(ds, shuffle):
+    def make_loader(ds, shuffle, sampler=None):
         return DataLoader(
             ds,
             batch_size=batch_size,
-            shuffle=shuffle,
+            shuffle=shuffle if sampler is None else False,
+            sampler=sampler,
             num_workers=num_workers,
             pin_memory=pin,
             persistent_workers=(num_workers > 0),
         )
 
-    train_loader = make_loader(train_ds, shuffle=True)
+    train_sampler = None
+    if train_sampler_mode != "none":
+        labels = torch.tensor(train_ds.get_labels(), dtype=torch.long)
+        counts = torch.bincount(labels, minlength=config.NUM_LABELS).float().clamp_min(1.0)
+        if train_sampler_mode == "balanced":
+            sample_weights = 1.0 / counts[labels]
+        elif train_sampler_mode == "sqrt_inv":
+            sample_weights = 1.0 / torch.sqrt(counts[labels])
+        else:
+            raise ValueError(f"train_sampler_mode khong ho tro: {train_sampler_mode}")
+
+        train_sampler = WeightedRandomSampler(
+            weights=sample_weights.double(),
+            num_samples=len(sample_weights),
+            replacement=True,
+        )
+
+    train_loader = make_loader(train_ds, shuffle=True, sampler=train_sampler)
     val_loader = make_loader(val_ds, shuffle=False)
 
     return (
