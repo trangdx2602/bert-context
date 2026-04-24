@@ -1,6 +1,6 @@
 __pycache__/
 EmotionDectection_Bert.ipynb
-it4772_emotionDialogue.ipynb
+#it4772_emotionDialogue.ipynb
 NLP_Hust.ipynb
 *.py[cod]
 *$py.class
